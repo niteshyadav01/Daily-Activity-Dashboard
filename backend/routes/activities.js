@@ -1,274 +1,207 @@
 const express = require('express');
-const db = require('../DB');
 const router = express.Router();
+const Activity = require('../models/Activity');
+const Employee = require('../models/Employee');
+const ActivityGenerationLog = require('../models/ActivityGenerationLog');
+const Setting = require('../models/Setting');
 
-// Get today's activities
-router.get('/today', (req, res) => {
-  const today = new Date().toISOString().split('T')[0];
-  
-  db.all(
-    `SELECT * FROM activities WHERE activity_date = ? ORDER BY employee_name`,
-    [today],
-    (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json(rows || []);
-    }
-  );
+// Helper — get today's date as YYYY-MM-DD in local timezone
+const getLocalDate = () => {
+  return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD
+};
+
+// GET /activities/today
+router.get('/today', async (req, res) => {
+  try {
+    const today = getLocalDate();
+    const activities = await Activity.find({ activity_date: today }).sort({ employee_name: 1 });
+    res.json(activities);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Get activities with filters
-router.get('/', (req, res) => {
-  const month = req.query.month;
-  const department = req.query.department;
-  const search = req.query.search;
-  const page = req.query.page || 1;
-  const limit = req.query.limit || 20;
+// GET /activities — with filters + pagination
+router.get('/', async (req, res) => {
+  try {
+    const { month, department, search, page = 1, limit = 20 } = req.query;
 
-  let query = 'SELECT * FROM activities WHERE 1=1';
-  const params = [];
+    const filter = {};
 
-  if (month) {
-    query += ' AND activity_date LIKE ?';
-    params.push(`${month}%`);
-  }
+    if (month) {
+      // match YYYY-MM prefix
+      filter.activity_date = { $regex: `^${month}` };
+    }
 
-  if (department && department !== 'all') {
-    query += ' AND department = ?';
-    params.push(department);
-  }
+    if (department && department !== 'all') {
+      filter.department = department;
+    }
 
-  if (search) {
-    query += ' AND employee_name LIKE ?';
-    params.push(`%${search}%`);
-  }
+    if (search) {
+      filter.employee_name = { $regex: search, $options: 'i' };
+    }
 
-  query += ' ORDER BY activity_date DESC';
+    const total = await Activity.countDocuments(filter);
+    const skip = (Number(page) - 1) * Number(limit);
 
-  // Get total count
-  db.get(query.replace('SELECT *', 'SELECT COUNT(*) as count'), params, (err, countResult) => {
-    if (err) return res.status(500).json({ error: err.message });
+    const data = await Activity.find(filter)
+      .sort({ activity_date: -1, _id: -1 })
+      .skip(skip)
+      .limit(Number(limit));
 
-    const offset = (page - 1) * limit;
-    const paginatedQuery = query + ` LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
-
-    db.all(paginatedQuery, params, (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({
-        data: rows,
-        pagination: {
-          page,
-          limit,
-          total: countResult.count,
-          totalPages: Math.ceil(countResult.count / limit)
-        }
-      });
+    res.json({
+      data,
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total,
+        totalPages: Math.ceil(total / Number(limit)),
+      },
     });
-  });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Generate today's activity (can be generated multiple times)
-router.post('/generate', (req, res) => {
-  const today = new Date().toISOString().split('T')[0];
+// POST /activities/generate
+router.post('/generate', async (req, res) => {
+  try {
+    const today = getLocalDate();
 
-  // Delete existing activities for today if they exist (allows re-generation)
-  db.run(
-    'DELETE FROM activities WHERE activity_date = ?',
-    [today],
-    (err) => {
-      if (err) {
-        console.error('Error deleting old activities:', err);
-      }
+    // Delete existing activities for today (allows re-generation)
+    await Activity.deleteMany({ activity_date: today });
 
-      // Get daily selection count from settings
-      db.get(
-        'SELECT setting_value FROM settings WHERE setting_key = ?',
-        ['daily_selection_count'],
-        (err, settingRow) => {
-          if (err) return res.status(500).json({ error: err.message });
+    // Get daily selection count from settings
+    const setting = await Setting.findOne({ setting_key: 'daily_selection_count' });
+    const dailyCount = setting ? parseInt(setting.setting_value) : 4;
 
-          const dailyCount = settingRow ? parseInt(settingRow.setting_value) : 4;
+    // Get minimum selected_count among active employees
+    const minResult = await Employee.aggregate([
+      { $match: { active: true } },
+      { $group: { _id: null, min_count: { $min: '$selected_count' } } },
+    ]);
 
-          // Get minimum selected_count among active employees
-          db.get(
-            'SELECT MIN(selected_count) as min_count FROM employees WHERE active = 1',
-            [],
-            (err, minResult) => {
-              if (err) return res.status(500).json({ error: err.message });
-
-              const minCount = minResult.min_count !== null ? minResult.min_count : 0;
-
-              // Get all active employees with minimum selected_count
-              db.all(
-                'SELECT * FROM employees WHERE active = 1 AND selected_count = ? ORDER BY RANDOM() LIMIT ?',
-                [minCount, dailyCount],
-                (err, selectedEmployees) => {
-                  if (err) return res.status(500).json({ error: err.message });
-
-                  if (!selectedEmployees || selectedEmployees.length === 0) {
-                    return res.status(400).json({ error: 'No active employees available' });
-                  }
-
-                  // If less than required, get more from next tier
-                  if (selectedEmployees.length < dailyCount) {
-                    const placeholders = selectedEmployees.map(e => e.id).join(',');
-                    db.all(
-                      `SELECT * FROM employees 
-                       WHERE active = 1 
-                       AND id NOT IN (${placeholders}) 
-                       AND selected_count = ? 
-                       ORDER BY RANDOM() 
-                       LIMIT ?`,
-                      [minCount + 1, dailyCount - selectedEmployees.length],
-                      (err, additionalEmployees) => {
-                        if (err) return res.status(500).json({ error: err.message });
-                        selectedEmployees.push(...additionalEmployees);
-                        saveActivities(selectedEmployees, today, dailyCount, res);
-                      }
-                    );
-                  } else {
-                    saveActivities(selectedEmployees, today, dailyCount, res);
-                  }
-                }
-              );
-            }
-          );
-        }
-      );
+    if (!minResult.length) {
+      return res.status(400).json({ error: 'No active employees available' });
     }
-  );
-});
 
-function saveActivities(employees, today, dailyCount, res) {
-  const activitiesData = [];
-  let completed = 0;
+    const minCount = minResult[0].min_count;
 
-  employees.slice(0, dailyCount).forEach((employee) => {
-    db.run(
-      `INSERT INTO activities (activity_date, employee_id, employee_name, department, cycle)
-       VALUES (?, ?, ?, ?, ?)`,
-      [today, employee.id, employee.employee_name, employee.department, employee.cycle_number],
-      function(err) {
-        if (err) {
-          console.error('Error inserting activity:', err);
-        } else {
-          activitiesData.push({
-            activity_id: this.lastID,
-            employee_id: employee.id,
-            employee_name: employee.employee_name,
-            department: employee.department,
-            cycle: employee.cycle_number
-          });
-        }
-        completed++;
+    // Get active employees with minimum selected_count
+    let selectedEmployees = await Employee.aggregate([
+      { $match: { active: true, selected_count: minCount } },
+      { $sample: { size: dailyCount } },
+    ]);
 
-        if (completed === dailyCount) {
-          updateEmployeesAndLog(employees, today, dailyCount, activitiesData, res);
-        }
-      }
+    // If not enough, pull from next tier
+    if (selectedEmployees.length < dailyCount) {
+      const existingIds = selectedEmployees.map((e) => e._id);
+      const additional = await Employee.aggregate([
+        {
+          $match: {
+            active: true,
+            selected_count: minCount + 1,
+            _id: { $nin: existingIds },
+          },
+        },
+        { $sample: { size: dailyCount - selectedEmployees.length } },
+      ]);
+      selectedEmployees = [...selectedEmployees, ...additional];
+    }
+
+    if (!selectedEmployees.length) {
+      return res.status(400).json({ error: 'No active employees available' });
+    }
+
+    // Insert activities
+    const slice = selectedEmployees.slice(0, dailyCount);
+    const activityDocs = slice.map((emp) => ({
+      activity_date: today,
+      employee_id: emp._id,
+      employee_name: emp.employee_name,
+      department: emp.department,
+      cycle: emp.cycle_number,
+    }));
+
+    const inserted = await Activity.insertMany(activityDocs);
+
+    // Update selected_count and last_selected_date for each employee
+    const bulkOps = slice.map((emp) => ({
+      updateOne: {
+        filter: { _id: emp._id },
+        update: {
+          $inc: { selected_count: 1 },
+          $set: { last_selected_date: today },
+        },
+      },
+    }));
+    await Employee.bulkWrite(bulkOps);
+
+    // Check if all active employees now have the same selected_count → increment cycle
+    const cycleCheck = await Employee.aggregate([
+      { $match: { active: true } },
+      {
+        $group: {
+          _id: null,
+          min_count: { $min: '$selected_count' },
+          max_count: { $max: '$selected_count' },
+        },
+      },
+    ]);
+
+    if (cycleCheck.length && cycleCheck[0].min_count === cycleCheck[0].max_count) {
+      await Employee.updateMany({ active: true }, { $inc: { cycle_number: 1 } });
+    }
+
+    // Log the generation (upsert so re-runs don't duplicate the log)
+    await ActivityGenerationLog.findOneAndUpdate(
+      { generation_date: today },
+      { count_generated: inserted.length },
+      { upsert: true }
     );
-  });
-}
 
-function updateEmployeesAndLog(employees, today, dailyCount, activitiesData, res) {
-  let updated = 0;
-
-  // Update selected_count and last_selected_date for each employee
-  employees.slice(0, dailyCount).forEach((employee) => {
-    db.run(
-      `UPDATE employees 
-       SET selected_count = selected_count + 1, 
-           last_selected_date = ?
-       WHERE id = ?`,
-      [today, employee.id],
-      function(err) {
-        if (err) console.error('Error updating employee:', err);
-        updated++;
-
-        if (updated === dailyCount) {
-          // Check if all active employees have same selected_count, if so increment cycle
-          checkAndUpdateCycle(today, activitiesData, res);
-        }
-      }
-    );
-  });
-}
-
-function checkAndUpdateCycle(today, activitiesData, res) {
-  db.get(
-    `SELECT MIN(selected_count) as min_count, MAX(selected_count) as max_count
-     FROM employees WHERE active = 1`,
-    [],
-    (err, result) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-
-      if (result.min_count === result.max_count) {
-        // All have same count, increment cycle
-        db.run(
-          'UPDATE employees SET cycle_number = cycle_number + 1 WHERE active = 1',
-          function(err) {
-            if (err) console.error('Error updating cycle:', err);
-            recordGenerationLog(today, activitiesData, res);
-          }
-        );
-      } else {
-        recordGenerationLog(today, activitiesData, res);
-      }
-    }
-  );
-}
-
-function recordGenerationLog(today, activitiesData, res) {
-  db.run(
-    'INSERT INTO activity_generation_log (generation_date, count_generated) VALUES (?, ?)',
-    [today, activitiesData.length],
-    function(err) {
-      if (err) console.error('Error logging generation:', err);
-      res.status(201).json({
-        message: 'Activity generated successfully',
-        date: today,
-        activities: activitiesData
-      });
-    }
-  );
-}
-
-// Reset activities - clear all today's activities
-router.post('/reset', (req, res) => {
-  const today = new Date().toISOString().split('T')[0];
-
-  db.run(
-    'DELETE FROM activities WHERE activity_date = ?',
-    [today],
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      res.json({
-        message: 'Today\'s activities cleared successfully',
-        date: today,
-        deletedCount: this.changes
-      });
-    }
-  );
+    res.status(201).json({
+      message: 'Activity generated successfully',
+      date: today,
+      activities: inserted.map((a) => ({
+        activity_id: a._id,
+        employee_id: a.employee_id,
+        employee_name: a.employee_name,
+        department: a.department,
+        cycle: a.cycle,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// Clear all activities (complete reset)
-router.post('/clear-all', (req, res) => {
-  db.run(
-    'DELETE FROM activities',
-    function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      res.json({
-        message: 'All activities cleared successfully',
-        deletedCount: this.changes
-      });
-    }
-  );
+// POST /activities/reset — clear today's activities
+router.post('/reset', async (req, res) => {
+  try {
+    const today = getLocalDate();
+    const result = await Activity.deleteMany({ activity_date: today });
+    res.json({
+      message: "Today's activities cleared successfully",
+      date: today,
+      deletedCount: result.deletedCount,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /activities/clear-all — delete every activity
+router.post('/clear-all', async (req, res) => {
+  try {
+    const result = await Activity.deleteMany({});
+    res.json({
+      message: 'All activities cleared successfully',
+      deletedCount: result.deletedCount,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

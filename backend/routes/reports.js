@@ -1,266 +1,172 @@
 const express = require('express');
-const db = require('../DB');
 const router = express.Router();
+const Activity = require('../models/Activity');
+const Employee = require('../models/Employee');
 
-// Get dashboard statistics
-router.get('/dashboard', (req, res) => {
-  const today = new Date().toISOString().split('T')[0];
+// Helper — get today's date as YYYY-MM-DD in local timezone
+const getLocalDate = () => new Date().toLocaleDateString('en-CA');
 
-  Promise.all([
-    getEmployeeCount(),
-    getTodaySelectionCount(today),
-    getRotationProgress(),
-    getPendingEmployees(),
-    getMonthlyActivityCount(),
-    getRecentActivities()
-  ]).then(([totalEmployees, todaySelected, rotationProgress, pending, monthlyCount, recentActivities]) => {
-    res.json({
+// GET /reports/dashboard
+router.get('/dashboard', async (req, res) => {
+  try {
+    const today = getLocalDate();
+    const currentMonth = today.slice(0, 7); // YYYY-MM
+
+    const [
       totalEmployees,
       todaySelected,
       rotationProgress,
-      pendingEmployees: pending,
-      monthlyActivityCount: monthlyCount,
-      recentActivities
+      pendingEmployees,
+      monthlyActivityCount,
+      recentActivities,
+    ] = await Promise.all([
+      // Total active employees
+      Employee.countDocuments({ active: true }),
+
+      // Today's selected count
+      Activity.countDocuments({ activity_date: today }),
+
+      // Rotation progress
+      Employee.aggregate([
+        { $match: { active: true } },
+        {
+          $group: {
+            _id: null,
+            maxCycle: { $max: '$cycle_number' },
+            maxSelected: { $max: '$selected_count' },
+          },
+        },
+      ]),
+
+      // Pending employees (selected_count < max)
+      Employee.aggregate([
+        { $match: { active: true } },
+        {
+          $group: {
+            _id: null,
+            maxSelected: { $max: '$selected_count' },
+          },
+        },
+      ]).then(async (result) => {
+        if (!result.length) return 0;
+        return Employee.countDocuments({
+          active: true,
+          selected_count: { $lt: result[0].maxSelected },
+        });
+      }),
+
+      // Monthly activity count
+      Activity.countDocuments({ activity_date: { $regex: `^${currentMonth}` } }),
+
+      // Recent activities (last 10)
+      Activity.find()
+        .sort({ activity_date: -1, _id: -1 })
+        .limit(10)
+        .select('activity_date employee_name department cycle'),
+    ]);
+
+    const rotation = rotationProgress[0] || {};
+
+    res.json({
+      totalEmployees,
+      todaySelected,
+      rotationProgress: {
+        currentCycle: rotation.maxCycle || 1,
+        maxSelected: rotation.maxSelected || 0,
+      },
+      pendingEmployees,
+      monthlyActivityCount,
+      recentActivities,
     });
-  }).catch(err => {
+  } catch (err) {
     res.status(500).json({ error: err.message });
-  });
+  }
 });
 
-function getEmployeeCount() {
-  return new Promise((resolve, reject) => {
-    db.get('SELECT COUNT(*) as count FROM employees WHERE active = 1', [], (err, row) => {
-      if (err) reject(err);
-      resolve(row?.count || 0);
-    });
-  });
-}
+// GET /reports/monthly/:yearMonth
+router.get('/monthly/:yearMonth', async (req, res) => {
+  try {
+    const { yearMonth } = req.params;
+    const dateFilter = { activity_date: { $regex: `^${yearMonth}` } };
 
-function getTodaySelectionCount(today) {
-  return new Promise((resolve, reject) => {
-    db.get(
-      'SELECT COUNT(*) as count FROM activities WHERE activity_date = ?',
-      [today],
-      (err, row) => {
-        if (err) reject(err);
-        resolve(row?.count || 0);
-      }
-    );
-  });
-}
+    const [monthlyStats, deptStats, topParticipants] = await Promise.all([
+      // Daily counts
+      Activity.aggregate([
+        { $match: dateFilter },
+        { $group: { _id: '$activity_date', count: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+        { $project: { _id: 0, activity_date: '$_id', count: 1 } },
+      ]),
 
-function getRotationProgress() {
-  return new Promise((resolve, reject) => {
-    db.all(
-      `SELECT cycle_number, COUNT(*) as count 
-       FROM employees 
-       WHERE active = 1 
-       GROUP BY cycle_number 
-       ORDER BY cycle_number DESC 
-       LIMIT 1`,
-      [],
-      (err, row) => {
-        if (err) reject(err);
-        const maxCycle = row?.[0]?.cycle_number || 1;
-        db.get(
-          `SELECT MAX(selected_count) as max_count FROM employees WHERE active = 1`,
-          [],
-          (err, maxRow) => {
-            if (err) reject(err);
-            const progress = {
-              currentCycle: maxCycle,
-              maxSelected: maxRow?.max_count || 0
-            };
-            resolve(progress);
-          }
-        );
-      }
-    );
-  });
-}
+      // Department breakdown
+      Activity.aggregate([
+        { $match: dateFilter },
+        { $group: { _id: '$department', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $project: { _id: 0, department: '$_id', count: 1 } },
+      ]),
 
-function getPendingEmployees() {
-  return new Promise((resolve, reject) => {
-    db.get(
-      `SELECT COUNT(*) as count 
-       FROM employees 
-       WHERE active = 1 AND selected_count < (
-         SELECT MAX(selected_count) FROM employees WHERE active = 1
-       )`,
-      [],
-      (err, row) => {
-        if (err) reject(err);
-        resolve(row?.count || 0);
-      }
-    );
-  });
-}
+      // Top participants
+      Activity.aggregate([
+        { $match: dateFilter },
+        { $group: { _id: '$employee_id', employee_name: { $first: '$employee_name' }, count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 10 },
+        { $project: { _id: 0, employee_id: '$_id', employee_name: 1, count: 1 } },
+      ]),
+    ]);
 
-function getMonthlyActivityCount() {
-  return new Promise((resolve, reject) => {
-    const currentMonth = new Date().toISOString().slice(0, 7);
-    db.get(
-      'SELECT COUNT(*) as count FROM activities WHERE activity_date LIKE ?',
-      [`${currentMonth}%`],
-      (err, row) => {
-        if (err) reject(err);
-        resolve(row?.count || 0);
-      }
-    );
-  });
-}
-
-function getRecentActivities() {
-  return new Promise((resolve, reject) => {
-    db.all(
-      `SELECT activity_id, activity_date, employee_name, department, cycle 
-       FROM activities 
-       ORDER BY activity_date DESC, activity_id DESC 
-       LIMIT 10`,
-      [],
-      (err, rows) => {
-        if (err) reject(err);
-        resolve(rows || []);
-      }
-    );
-  });
-}
-
-// Get monthly report
-router.get('/monthly/:yearMonth', (req, res) => {
-  const { yearMonth } = req.params;
-
-  Promise.all([
-    getMonthlyStats(yearMonth),
-    getDepartmentStats(yearMonth),
-    getTopParticipants(yearMonth)
-  ]).then(([monthlyStats, deptStats, topParticipants]) => {
     res.json({
       month: yearMonth,
       stats: monthlyStats,
       departmentStats: deptStats,
-      topParticipants
+      topParticipants,
     });
-  }).catch(err => {
+  } catch (err) {
     res.status(500).json({ error: err.message });
-  });
+  }
 });
 
-function getMonthlyStats(yearMonth) {
-  return new Promise((resolve, reject) => {
-    db.all(
-      `SELECT activity_date, COUNT(*) as count 
-       FROM activities 
-       WHERE activity_date LIKE ? 
-       GROUP BY activity_date 
-       ORDER BY activity_date`,
-      [`${yearMonth}%`],
-      (err, rows) => {
-        if (err) reject(err);
-        resolve(rows || []);
-      }
-    );
-  });
-}
+// GET /reports/stats/all
+router.get('/stats/all', async (req, res) => {
+  try {
+    const [totalStats, allTimeParticipation, departmentParticipation] = await Promise.all([
+      // Employee totals
+      Employee.aggregate([
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            active: { $sum: { $cond: ['$active', 1, 0] } },
+            inactive: { $sum: { $cond: ['$active', 0, 1] } },
+          },
+        },
+        { $project: { _id: 0, total: 1, active: 1, inactive: 1 } },
+      ]).then((r) => r[0] || { total: 0, active: 0, inactive: 0 }),
 
-function getDepartmentStats(yearMonth) {
-  return new Promise((resolve, reject) => {
-    db.all(
-      `SELECT department, COUNT(*) as count 
-       FROM activities 
-       WHERE activity_date LIKE ? 
-       GROUP BY department 
-       ORDER BY count DESC`,
-      [`${yearMonth}%`],
-      (err, rows) => {
-        if (err) reject(err);
-        resolve(rows || []);
-      }
-    );
-  });
-}
+      // All-time participation per employee
+      Activity.aggregate([
+        { $group: { _id: '$employee_id', employee_name: { $first: '$employee_name' }, count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $project: { _id: 0, employee_id: '$_id', employee_name: 1, count: 1 } },
+      ]),
 
-function getTopParticipants(yearMonth) {
-  return new Promise((resolve, reject) => {
-    db.all(
-      `SELECT employee_name, employee_id, COUNT(*) as count 
-       FROM activities 
-       WHERE activity_date LIKE ? 
-       GROUP BY employee_id 
-       ORDER BY count DESC 
-       LIMIT 10`,
-      [`${yearMonth}%`],
-      (err, rows) => {
-        if (err) reject(err);
-        resolve(rows || []);
-      }
-    );
-  });
-}
+      // Department participation
+      Activity.aggregate([
+        { $group: { _id: '$department', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $project: { _id: 0, department: '$_id', count: 1 } },
+      ]),
+    ]);
 
-// Get all time stats
-router.get('/stats/all', (req, res) => {
-  Promise.all([
-    getTotalEmployeesStats(),
-    getAllTimeParticipation(),
-    getDepartmentParticipation()
-  ]).then(([totalStats, participation, deptParticipation]) => {
     res.json({
       totalStats,
-      allTimeParticipation: participation,
-      departmentParticipation: deptParticipation
+      allTimeParticipation,
+      departmentParticipation,
     });
-  }).catch(err => {
+  } catch (err) {
     res.status(500).json({ error: err.message });
-  });
+  }
 });
-
-function getTotalEmployeesStats() {
-  return new Promise((resolve, reject) => {
-    db.get(
-      `SELECT COUNT(*) as total, 
-              SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END) as active,
-              SUM(CASE WHEN active = 0 THEN 1 ELSE 0 END) as inactive
-       FROM employees`,
-      [],
-      (err, row) => {
-        if (err) reject(err);
-        resolve(row || {});
-      }
-    );
-  });
-}
-
-function getAllTimeParticipation() {
-  return new Promise((resolve, reject) => {
-    db.all(
-      `SELECT employee_name, COUNT(*) as count 
-       FROM activities 
-       GROUP BY employee_id 
-       ORDER BY count DESC`,
-      [],
-      (err, rows) => {
-        if (err) reject(err);
-        resolve(rows || []);
-      }
-    );
-  });
-}
-
-function getDepartmentParticipation() {
-  return new Promise((resolve, reject) => {
-    db.all(
-      `SELECT department, COUNT(*) as count 
-       FROM activities 
-       GROUP BY department 
-       ORDER BY count DESC`,
-      [],
-      (err, rows) => {
-        if (err) reject(err);
-        resolve(rows || []);
-      }
-    );
-  });
-}
 
 module.exports = router;

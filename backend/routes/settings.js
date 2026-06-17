@@ -1,57 +1,46 @@
 const express = require('express');
-const db = require('../DB');
 const router = express.Router();
+const Setting = require('../models/Setting');
 
-// Get all settings
-router.get('/', (req, res) => {
-  db.all('SELECT * FROM settings', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows || []);
-  });
-});
-
-// Get single setting
-router.get('/:key', (req, res) => {
-  db.get(
-    'SELECT * FROM settings WHERE setting_key = ?',
-    [req.params.key],
-    (err, row) => {
-      if (err) return res.status(500).json({ error: err.message });
-      if (!row) return res.status(404).json({ error: 'Setting not found' });
-      res.json(row);
-    }
-  );
-});
-
-// Update setting
-router.put('/:key', (req, res) => {
-  const { setting_value } = req.body;
-
-  if (setting_value === undefined) {
-    return res.status(400).json({ error: 'setting_value required' });
+// GET /settings — all settings
+router.get('/', async (req, res) => {
+  try {
+    const settings = await Setting.find();
+    res.json(settings);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
+});
 
-  db.run(
-    `UPDATE settings SET setting_value = ?, updated_at = CURRENT_TIMESTAMP 
-     WHERE setting_key = ?`,
-    [setting_value, req.params.key],
-    function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      if (this.changes === 0) {
-        // Insert if not exists
-        db.run(
-          `INSERT INTO settings (setting_key, setting_value) VALUES (?, ?)`,
-          [req.params.key, setting_value],
-          (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ message: 'Setting updated' });
-          }
-        );
-      } else {
-        res.json({ message: 'Setting updated' });
-      }
+// GET /settings/:key
+router.get('/:key', async (req, res) => {
+  try {
+    const setting = await Setting.findOne({ setting_key: req.params.key });
+    if (!setting) return res.status(404).json({ error: 'Setting not found' });
+    res.json(setting);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /settings/:key — upsert
+router.put('/:key', async (req, res) => {
+  try {
+    const { setting_value } = req.body;
+    if (setting_value === undefined) {
+      return res.status(400).json({ error: 'setting_value required' });
     }
-  );
+
+    await Setting.findOneAndUpdate(
+      { setting_key: req.params.key },
+      { setting_value },
+      { upsert: true, new: true }
+    );
+
+    res.json({ message: 'Setting updated' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

@@ -1,137 +1,39 @@
 const express = require('express');
-const db = require('../DB');
 const router = express.Router();
+const Employee = require('../models/Employee');
 
-// Get all employees with pagination
-router.get('/', (req, res) => {
-  const page = req.query.page || 1;
-  const limit = req.query.limit || 10;
-  const department = req.query.department;
-  const search = req.query.search;
+// GET /employees — paginated list with filters
+router.get('/', async (req, res) => {
+  try {
+    const { page = 1, limit = 10, department, search } = req.query;
 
-  let query = 'SELECT * FROM employees WHERE 1=1';
-  const params = [];
+    const filter = {};
+    if (department && department !== 'all') filter.department = department;
+    if (search) filter.employee_name = { $regex: search, $options: 'i' };
 
-  if (department && department !== 'all') {
-    query += ' AND department = ?';
-    params.push(department);
-  }
+    const total = await Employee.countDocuments(filter);
+    const skip = (Number(page) - 1) * Number(limit);
 
-  if (search) {
-    query += ' AND employee_name LIKE ?';
-    params.push(`%${search}%`);
-  }
+    const data = await Employee.find(filter)
+      .sort({ created_at: -1 })
+      .skip(skip)
+      .limit(Number(limit));
 
-  query += ' ORDER BY created_at DESC';
-
-  // Get total count
-  db.get(query.replace('SELECT *', 'SELECT COUNT(*) as count'), params, (err, countResult) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-
-    const offset = (page - 1) * limit;
-    query += ` LIMIT ? OFFSET ?`;
-    params.push(limit, offset);
-
-    db.all(query, params, (err, rows) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      res.json({
-        data: rows,
-        pagination: {
-          page,
-          limit,
-          total: countResult.count,
-          totalPages: Math.ceil(countResult.count / limit)
-        }
-      });
+    res.json({
+      data,
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total,
+        totalPages: Math.ceil(total / Number(limit)),
+      },
     });
-  });
-});
-
-// Get single employee
-router.get('/:id', (req, res) => {
-  db.get('SELECT * FROM employees WHERE id = ?', [req.params.id], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!row) return res.status(404).json({ error: 'Employee not found' });
-    res.json(row);
-  });
-});
-
-// Create employee
-router.post('/', (req, res) => {
-  const { employee_name, department } = req.body;
-
-  if (!employee_name || !department) {
-    return res.status(400).json({ error: 'Name and department required' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-
-  db.run(
-    'INSERT INTO employees (employee_name, department) VALUES (?, ?)',
-    [employee_name, department],
-    function(err) {
-      if (err) {
-        if (err.message.includes('UNIQUE constraint failed')) {
-          return res.status(409).json({ error: 'Employee already exists' });
-        }
-        return res.status(500).json({ error: err.message });
-      }
-      res.status(201).json({ id: this.lastID, employee_name, department });
-    }
-  );
 });
 
-// Update employee
-router.put('/:id', (req, res) => {
-  const { employee_name, department, active } = req.body;
-  const params = [];
-  let query = 'UPDATE employees SET';
-
-  if (employee_name !== undefined) {
-    query += ' employee_name = ?,';
-    params.push(employee_name);
-  }
-  if (department !== undefined) {
-    query += ' department = ?,';
-    params.push(department);
-  }
-  if (active !== undefined) {
-    query += ' active = ?,';
-    params.push(active ? 1 : 0);
-  }
-
-  query = query.slice(0, -1); // Remove trailing comma
-  query += ' WHERE id = ?';
-  params.push(req.params.id);
-
-  db.run(query, params, function(err) {
-    if (err) return res.status(500).json({ error: err.message });
-    if (this.changes === 0) return res.status(404).json({ error: 'Employee not found' });
-    res.json({ message: 'Employee updated' });
-  });
-});
-
-// Delete employee
-router.delete('/:id', (req, res) => {
-  db.run('DELETE FROM employees WHERE id = ?', [req.params.id], function(err) {
-    if (err) return res.status(500).json({ error: err.message });
-    if (this.changes === 0) return res.status(404).json({ error: 'Employee not found' });
-    res.json({ message: 'Employee deleted' });
-  });
-});
-
-// Disable employee (soft delete)
-router.patch('/:id/disable', (req, res) => {
-  db.run('UPDATE employees SET active = 0 WHERE id = ?', [req.params.id], function(err) {
-    if (err) return res.status(500).json({ error: err.message });
-    if (this.changes === 0) return res.status(404).json({ error: 'Employee not found' });
-    res.json({ message: 'Employee disabled' });
-  });
-});
-
-// Get all departments
+// GET /employees/data/departments — must come BEFORE /:id
 router.get('/data/departments', (req, res) => {
   const departments = [
     'Projects',
@@ -143,9 +45,82 @@ router.get('/data/departments', (req, res) => {
     'Admin',
     'Housekeeping',
     'Design',
-    'CAE'
+    'CAE',
   ];
   res.json(departments);
+});
+
+// GET /employees/:id
+router.get('/:id', async (req, res) => {
+  try {
+    const employee = await Employee.findById(req.params.id);
+    if (!employee) return res.status(404).json({ error: 'Employee not found' });
+    res.json(employee);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /employees — create
+router.post('/', async (req, res) => {
+  try {
+    const { employee_name, department } = req.body;
+    if (!employee_name || !department) {
+      return res.status(400).json({ error: 'Name and department required' });
+    }
+
+    const employee = new Employee({ employee_name, department });
+    await employee.save();
+    res.status(201).json(employee);
+  } catch (err) {
+    if (err.code === 11000) {
+      return res.status(409).json({ error: 'Employee already exists' });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /employees/:id — update
+router.put('/:id', async (req, res) => {
+  try {
+    const { employee_name, department, active } = req.body;
+    const updates = {};
+    if (employee_name !== undefined) updates.employee_name = employee_name;
+    if (department !== undefined) updates.department = department;
+    if (active !== undefined) updates.active = Boolean(active);
+
+    const employee = await Employee.findByIdAndUpdate(req.params.id, updates, { new: true });
+    if (!employee) return res.status(404).json({ error: 'Employee not found' });
+    res.json({ message: 'Employee updated', employee });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /employees/:id
+router.delete('/:id', async (req, res) => {
+  try {
+    const employee = await Employee.findByIdAndDelete(req.params.id);
+    if (!employee) return res.status(404).json({ error: 'Employee not found' });
+    res.json({ message: 'Employee deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /employees/:id/disable — soft delete
+router.patch('/:id/disable', async (req, res) => {
+  try {
+    const employee = await Employee.findByIdAndUpdate(
+      req.params.id,
+      { active: false },
+      { new: true }
+    );
+    if (!employee) return res.status(404).json({ error: 'Employee not found' });
+    res.json({ message: 'Employee disabled' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
