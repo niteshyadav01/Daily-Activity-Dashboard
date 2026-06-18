@@ -31,6 +31,7 @@ export const activityAPI = {
   reset: () => api.post('/activities/reset'),
   clearAll: () => api.post('/activities/clear-all'),
   addManual: (activity_date, employee_id) => api.post('/activities/add-manual', { activity_date, employee_id }),
+  updateStatus: (id, status, reason = '') => api.put(`/activities/${id}/status`, { status, reason }),
 };
 
 // Upload

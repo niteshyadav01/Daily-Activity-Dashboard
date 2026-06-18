@@ -77,6 +77,12 @@ router.post('/generate', async (req, res) => {
     const setting = await Setting.findOne({ setting_key: 'daily_selection_count' });
     const dailyCount = setting ? parseInt(setting.setting_value) : 4;
 
+    // ── Find employees with pending not_attended/other status from past ──
+    // These employees had their selected_count decremented, so they will
+    // naturally appear at the front of the queue (lowest count).
+    // No special logic needed — the existing min-count selection already
+    // handles this correctly once the count is decremented.
+
     // Get minimum selected_count among active employees
     const minResult = await Employee.aggregate([
       { $match: { active: true } },
@@ -89,13 +95,13 @@ router.post('/generate', async (req, res) => {
 
     const minCount = minResult[0].min_count;
 
-    // Get active employees with minimum selected_count
+    // Get active employees with minimum selected_count (includes re-queued ones)
     let selectedEmployees = await Employee.aggregate([
       { $match: { active: true, selected_count: minCount } },
       { $sample: { size: dailyCount } },
     ]);
 
-    // If not enough, pull from next tier
+    // If not enough at min level, pull from next tier
     if (selectedEmployees.length < dailyCount) {
       const existingIds = selectedEmployees.map((e) => e._id);
       const additional = await Employee.aggregate([
@@ -115,19 +121,22 @@ router.post('/generate', async (req, res) => {
       return res.status(400).json({ error: 'No active employees available' });
     }
 
-    // Insert activities
     const slice = selectedEmployees.slice(0, dailyCount);
+
+    // Insert activities (status starts empty — to be filled in History page)
     const activityDocs = slice.map((emp) => ({
       activity_date: today,
       employee_id: emp._id,
       employee_name: emp.employee_name,
       department: emp.department,
       cycle: emp.cycle_number,
+      status: '',
+      status_reason: '',
     }));
 
     const inserted = await Activity.insertMany(activityDocs);
 
-    // Update selected_count and last_selected_date for each employee
+    // Increment selected_count and update last_selected_date
     const bulkOps = slice.map((emp) => ({
       updateOne: {
         filter: { _id: emp._id },
@@ -139,7 +148,7 @@ router.post('/generate', async (req, res) => {
     }));
     await Employee.bulkWrite(bulkOps);
 
-    // Check if all active employees now have the same selected_count → increment cycle
+    // Check if all active employees now have the same selected_count → new cycle
     const cycleCheck = await Employee.aggregate([
       { $match: { active: true } },
       {
@@ -155,7 +164,7 @@ router.post('/generate', async (req, res) => {
       await Employee.updateMany({ active: true }, { $inc: { cycle_number: 1 } });
     }
 
-    // Log the generation (upsert so re-runs don't duplicate the log)
+    // Log the generation
     await ActivityGenerationLog.findOneAndUpdate(
       { generation_date: today },
       { count_generated: inserted.length },
@@ -173,6 +182,59 @@ router.post('/generate', async (req, res) => {
         cycle: a.cycle,
       })),
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /activities/:id/status — save attendance status to DB
+router.put('/:id/status', async (req, res) => {
+  try {
+    const { status, reason } = req.body;
+
+    const validStatuses = ['', 'attended', 'not_attended', 'other'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Invalid status value' });
+    }
+
+    const activity = await Activity.findById(req.params.id);
+    if (!activity) return res.status(404).json({ error: 'Activity not found' });
+
+    const previousStatus = activity.status;
+
+    // Save status to DB
+    activity.status = status;
+    activity.status_reason = status === 'other' ? (reason || '') : '';
+    activity.status_updated_at = new Date();
+    await activity.save();
+
+    // ── Adjust employee selected_count based on status change ──────────────
+    //
+    // Rule:
+    //   attended        → count stays as-is (they completed their turn)
+    //   not_attended    → decrement count so they get picked again sooner
+    //   other           → decrement count so they get picked again sooner
+    //   cleared ('')    → if previous was not_attended/other, re-increment
+    //                     to undo the earlier decrement
+    //
+    const penalised = ['not_attended', 'other'];
+    const wasDeducted  = penalised.includes(previousStatus);
+    const nowDeducted  = penalised.includes(status);
+
+    if (!wasDeducted && nowDeducted) {
+      // First time marking as not_attended/other — decrement
+      await Employee.findByIdAndUpdate(activity.employee_id, {
+        $inc: { selected_count: -1 },
+      });
+    } else if (wasDeducted && !nowDeducted) {
+      // Changing away from not_attended/other — restore the count
+      await Employee.findByIdAndUpdate(activity.employee_id, {
+        $inc: { selected_count: 1 },
+      });
+    }
+    // attended → attended, or not_attended → not_attended: no change needed
+
+    res.json({ message: 'Status updated', activity });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

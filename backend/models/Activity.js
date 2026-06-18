@@ -23,6 +23,19 @@ const activitySchema = new mongoose.Schema(
       type: Number,
       default: 1,
     },
+    status: {
+      type: String,
+      enum: ['', 'attended', 'not_attended', 'other'],
+      default: '',
+    },
+    status_reason: {
+      type: String,
+      default: '',
+    },
+    status_updated_at: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },
