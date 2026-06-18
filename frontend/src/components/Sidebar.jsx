@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   FiHome, FiUsers, FiUpload, FiZap,
   FiList, FiBarChart2, FiSettings, FiX, FiActivity
@@ -17,11 +17,15 @@ const menuItems = [
 
 const Sidebar = ({ isOpen, onClose }) => {
   const location = useLocation();
+  const navigate = useNavigate();
 
   const content = (
     <div className="flex flex-col h-full bg-slate-900 text-white">
-      {/* Logo */}
-      <div className="flex items-center justify-between px-6 py-5 border-b border-slate-700/60">
+      {/* Logo — clicking goes to home */}
+      <div
+        onClick={() => { navigate('/'); onClose(); }}
+        className="flex items-center justify-between px-6 py-5 border-b border-slate-700/60 cursor-pointer hover:bg-slate-800/50 transition-colors"
+      >
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-900/40">
             <FiActivity size={18} className="text-white" />
