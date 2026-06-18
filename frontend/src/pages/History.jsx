@@ -1,5 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { FiDownload } from 'react-icons/fi';
+import React, { useEffect, useState, useCallback } from 'react';
+import {
+  FiDownload, FiSearch, FiChevronLeft, FiChevronRight,
+  FiUserPlus, FiX, FiCheckCircle, FiAlertCircle, FiCalendar
+} from 'react-icons/fi';
 import TopBar from '../components/TopBar';
 import Table from '../components/Table';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -7,331 +10,386 @@ import { activityAPI, employeeAPI } from '../utils/api';
 import { formatDate, getCurrentMonth } from '../utils/helpers';
 import * as XLSX from 'xlsx';
 
+// ─── localStorage helpers ────────────────────────────────────────────────────
 const STORAGE_KEY = 'activity_statuses';
+const loadStatuses = () => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; } };
+const saveStatuses = (s) => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch {} };
+const getRowKey = (a) => [a._id || a.id, a.employee_name, a.activity_date, a.department, a.cycle]
+  .filter(Boolean).join('_').replace(/\s+/g, '-');
 
-const loadStatusesFromStorage = () => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-};
-
-const saveStatusesToStorage = (statuses) => {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(statuses));
-  } catch {
-    console.error('Failed to save statuses to localStorage');
-  }
-};
-
-// Build a guaranteed unique key per row using multiple fields
-const getRowKey = (activity) => {
-  return [
-    activity.id,
-    activity.employee_name,
-    activity.activity_date,
-    activity.department,
-    activity.cycle,
-  ]
-    .filter(Boolean)
-    .join('_')
-    .replace(/\s+/g, '-');
-};
-
+// ─── StatusCell ──────────────────────────────────────────────────────────────
 const StatusCell = ({ rowKey, initialStatus, initialReason, onStatusChange }) => {
   const [status, setStatus] = useState(initialStatus || '');
   const [reason, setReason] = useState(initialReason || '');
-  const [saved, setSaved] = useState(!!initialStatus);
+  const [saved, setSaved]   = useState(!!initialStatus);
 
-  const handleStatusChange = (e) => {
-    const newStatus = e.target.value;
-    setStatus(newStatus);
-    setReason('');
-    setSaved(false);
-
-    if (newStatus === '') {
-      onStatusChange(rowKey, '', '');
-      return;
-    }
-
-    if (newStatus !== 'other') {
-      onStatusChange(rowKey, newStatus, '');
-      setSaved(true);
-    }
+  const onChange = (e) => {
+    const v = e.target.value;
+    setStatus(v); setReason(''); setSaved(false);
+    if (!v || v !== 'other') { onStatusChange(rowKey, v, ''); if (v && v !== 'other') setSaved(true); }
   };
 
-  const handleReasonChange = (e) => {
-    setReason(e.target.value);
-    setSaved(false);
-  };
-
-  const handleSave = () => {
-    if (!reason.trim()) return;
-    onStatusChange(rowKey, status, reason.trim());
-    setSaved(true);
-  };
+  const colorClass =
+    status === 'attended'     ? 'border-emerald-300 bg-emerald-50 text-emerald-700' :
+    status === 'not_attended' ? 'border-red-300 bg-red-50 text-red-700'             :
+    status === 'other'        ? 'border-amber-300 bg-amber-50 text-amber-700'       :
+                                'border-slate-200 text-slate-500';
 
   return (
-    <div className="flex flex-col gap-1 min-w-[180px]">
-      <select
-        value={status}
-        onChange={handleStatusChange}
-        className={`px-2 py-1 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none
-          ${status === 'attended'     ? 'border-green-400 bg-green-50 text-green-700'    :
-            status === 'not_attended' ? 'border-red-400 bg-red-50 text-red-700'          :
-            status === 'other'        ? 'border-yellow-400 bg-yellow-50 text-yellow-700' :
-                                        'border-gray-300 text-gray-500'}`}
-      >
-        <option value="">-- Select --</option>
+    <div className="flex flex-col gap-1 min-w-[170px]">
+      <select value={status} onChange={onChange}
+        className={`w-full px-2.5 py-1.5 border rounded-lg text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-400 transition-colors ${colorClass}`}>
+        <option value="">— Select —</option>
         <option value="attended">Attended</option>
         <option value="not_attended">Not Attended</option>
         <option value="other">Other</option>
       </select>
-
       {status === 'other' && (
         <div className="flex gap-1">
-          <input
-            type="text"
-            placeholder="Enter reason..."
-            value={reason}
-            onChange={handleReasonChange}
-            className="flex-1 px-2 py-1 border border-yellow-400 rounded-lg text-sm focus:ring-2 focus:ring-yellow-400 outline-none bg-yellow-50"
-          />
+          <input type="text" placeholder="Reason…" value={reason}
+            onChange={(e) => { setReason(e.target.value); setSaved(false); }}
+            className="flex-1 px-2 py-1 border border-amber-300 rounded-lg text-xs bg-amber-50 focus:outline-none focus:ring-1 focus:ring-amber-400" />
           <button
-            onClick={handleSave}
+            onClick={() => { if (!reason.trim()) return; onStatusChange(rowKey, status, reason.trim()); setSaved(true); }}
             disabled={!reason.trim()}
-            className="px-2 py-1 bg-yellow-500 text-white rounded-lg text-xs hover:bg-yellow-600 disabled:opacity-40"
-          >
+            className="px-2 py-1 bg-amber-500 text-white rounded-lg text-xs hover:bg-amber-600 disabled:opacity-40 font-semibold">
             {saved ? '✓' : 'Save'}
           </button>
         </div>
-      )}
-
-      {saved && (
-        <span className="text-xs text-green-600 font-medium">✓ Saved</span>
       )}
     </div>
   );
 };
 
-const History = () => {
-  const [activities, setActivities] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [month, setMonth] = useState(getCurrentMonth());
-  const [department, setDepartment] = useState('all');
-  const [departments, setDepartments] = useState([]);
-  const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
-  const [pagination, setPagination] = useState({ total: 0, totalPages: 0 });
-  const [activityStatuses, setActivityStatuses] = useState(loadStatusesFromStorage);
+// ─── AddEmployeeModal ────────────────────────────────────────────────────────
+const AddEmployeeModal = ({ onClose, onAdded }) => {
+  const [allEmployees, setAllEmployees] = useState([]);
+  const [search, setSearch]             = useState('');
+  const [date, setDate]                 = useState(new Date().toLocaleDateString('en-CA'));
+  const [selectedEmp, setSelectedEmp]   = useState(null);
+  const [loading, setLoading]           = useState(false);
+  const [fetching, setFetching]         = useState(false);
+  const [error, setError]               = useState('');
+  const [success, setSuccess]           = useState('');
 
   useEffect(() => {
-    fetchActivities();
-    fetchDepartments();
-  }, [page, month, department, search]);
+    const fetchAll = async () => {
+      try {
+        setFetching(true);
+        // Fetch all active employees (no pagination needed for search UX)
+        const res = await employeeAPI.getAll(1, 500, '', '');
+        setAllEmployees(res.data.data.filter(e => e.active));
+      } catch (e) { setError('Could not load employees'); }
+      finally { setFetching(false); }
+    };
+    fetchAll();
+  }, []);
 
-  const fetchActivities = async () => {
+  const filtered = allEmployees.filter(e =>
+    e.employee_name.toLowerCase().includes(search.toLowerCase()) ||
+    e.department.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const handleAdd = async () => {
+    if (!selectedEmp || !date) { setError('Select a date and an employee'); return; }
+    try {
+      setLoading(true); setError(''); setSuccess('');
+      await activityAPI.addManual(date, selectedEmp._id || selectedEmp.id);
+      setSuccess(`${selectedEmp.employee_name} added to ${formatDate(date)} successfully!`);
+      setTimeout(() => { onAdded(); onClose(); }, 1500);
+    } catch (e) {
+      setError(e.response?.data?.error || 'Error adding employee to activity');
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[90vh]">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
+          <div>
+            <h3 className="text-base font-bold text-slate-800">Add Employee to Activity</h3>
+            <p className="text-xs text-slate-400 mt-0.5">Manually add a missed or deleted employee</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
+            <FiX size={18} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {error   && <div className="alert-error text-xs"><FiAlertCircle size={14} className="flex-shrink-0" />{error}</div>}
+          {success && <div className="alert-success text-xs"><FiCheckCircle size={14} className="flex-shrink-0" />{success}</div>}
+
+          {/* Date picker */}
+          <div>
+            <label className="label">Activity Date</label>
+            <div className="relative">
+              <FiCalendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input type="date" value={date} onChange={e => setDate(e.target.value)}
+                className="input pl-9" />
+            </div>
+            <p className="text-xs text-slate-400 mt-1">Pick the date this employee should be added to</p>
+          </div>
+
+          {/* Employee search */}
+          <div>
+            <label className="label">Search Employee</label>
+            <div className="relative">
+              <FiSearch size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input type="text" placeholder="Name or department…" value={search}
+                onChange={e => { setSearch(e.target.value); setSelectedEmp(null); }}
+                className="input pl-9" />
+            </div>
+          </div>
+
+          {/* Employee list */}
+          <div className="rounded-xl border border-slate-200 overflow-hidden max-h-52 overflow-y-auto">
+            {fetching ? (
+              <div className="py-8"><LoadingSpinner size="md" /></div>
+            ) : filtered.length === 0 ? (
+              <p className="text-center text-xs text-slate-400 py-6">No employees found</p>
+            ) : (
+              filtered.map(emp => {
+                const isSelected = selectedEmp?._id === (emp._id || emp.id) ||
+                                   selectedEmp?.id  === (emp._id || emp.id);
+                return (
+                  <button key={emp._id || emp.id} onClick={() => setSelectedEmp(emp)}
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-left border-b border-slate-50 last:border-0 transition-colors
+                      ${isSelected ? 'bg-indigo-50 border-indigo-100' : 'hover:bg-slate-50'}`}>
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0
+                      ${isSelected ? 'bg-indigo-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                      {emp.employee_name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <p className={`text-sm font-semibold truncate ${isSelected ? 'text-indigo-700' : 'text-slate-800'}`}>
+                        {emp.employee_name}
+                      </p>
+                      <p className="text-xs text-slate-400 truncate">{emp.department}</p>
+                    </div>
+                    {isSelected && <FiCheckCircle size={16} className="text-indigo-600 ml-auto flex-shrink-0" />}
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          {/* Selected summary */}
+          {selectedEmp && date && (
+            <div className="rounded-xl bg-indigo-50 border border-indigo-100 p-3 text-xs">
+              <p className="font-semibold text-indigo-800">Ready to add:</p>
+              <p className="text-indigo-600 mt-0.5">
+                <span className="font-bold">{selectedEmp.employee_name}</span> ({selectedEmp.department})
+                {' '}→ <span className="font-bold">{formatDate(date)}</span>
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex gap-3 px-5 pb-5 pt-3 border-t border-slate-100 flex-shrink-0">
+          <button onClick={handleAdd} disabled={loading || !selectedEmp || !date} className="btn-primary flex-1">
+            {loading ? <LoadingSpinner size="sm" /> : <FiUserPlus size={16} />}
+            {loading ? 'Adding…' : 'Add to Activity'}
+          </button>
+          <button onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── History page ────────────────────────────────────────────────────────────
+const History = ({ onMenuClick }) => {
+  const [activities, setActivities]         = useState([]);
+  const [loading, setLoading]               = useState(false);
+  const [filterMode, setFilterMode]         = useState('month'); // 'month' | 'date'
+  const [month, setMonth]                   = useState(getCurrentMonth());
+  const [date, setDate]                     = useState(new Date().toLocaleDateString('en-CA'));
+  const [department, setDepartment]         = useState('all');
+  const [departments, setDepartments]       = useState([]);
+  const [search, setSearch]                 = useState('');
+  const [page, setPage]                     = useState(1);
+  const [pagination, setPagination]         = useState({ total: 0, totalPages: 0 });
+  const [activityStatuses, setActivityStatuses] = useState(loadStatuses);
+  const [showAddModal, setShowAddModal]     = useState(false);
+
+  const fetchActivities = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await activityAPI.getAll(
-        page, 20, month,
+      const r = await activityAPI.getAll(
+        page, 20,
+        filterMode === 'month' ? month : '',
         department === 'all' ? '' : department,
-        search
+        search,
+        filterMode === 'date' ? date : ''
       );
-      setActivities(response.data.data);
-      setPagination(response.data.pagination);
-    } catch (error) {
-      console.error('Error fetching activities:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+      setActivities(r.data.data);
+      setPagination(r.data.pagination);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }, [page, month, date, filterMode, department, search]);
 
-  const fetchDepartments = async () => {
-    try {
-      const response = await employeeAPI.getDepartments();
-      setDepartments(response.data);
-    } catch (error) {
-      console.error('Error fetching departments:', error);
-    }
-  };
+  useEffect(() => { fetchActivities(); }, [fetchActivities]);
+  useEffect(() => {
+    employeeAPI.getDepartments().then(r => setDepartments(r.data)).catch(console.error);
+  }, []);
 
   const handleStatusChange = (rowKey, status, reason) => {
-    setActivityStatuses((prev) => {
+    setActivityStatuses(prev => {
       const updated = { ...prev, [rowKey]: { status, reason } };
-      saveStatusesToStorage(updated);
+      saveStatuses(updated);
       return updated;
     });
   };
 
   const handleExport = () => {
     try {
-      const enrichedActivities = activities.map((activity) => {
-        // Use same key logic as StatusCell
-        const rowKey = getRowKey(activity);
-        const statusInfo = activityStatuses[rowKey];
-
-        // Each row independently resolves its own status
-        const statusValue = statusInfo?.status ?? '';
-        const reasonValue = statusInfo?.reason ?? '';
-
-        const statusLabel =
-          statusValue === 'attended'     ? 'Attended'     :
-          statusValue === 'not_attended' ? 'Not Attended' :
-          statusValue === 'other'        ? 'Other'        : '';
-
-        // Reason ONLY for this row if its own status is 'other'
-        const reasonText = statusValue === 'other' ? reasonValue : '';
-
-        return {
-          Date:       formatDate(activity.activity_date),
-          Employee:   activity.employee_name,
-          Department: activity.department,
-          Cycle:      activity.cycle,
-          Status:     statusLabel,
-          Reason:     reasonText,
-        };
+      const rows = activities.map(a => {
+        const k = getRowKey(a); const s = activityStatuses[k] || {};
+        const label = s.status === 'attended' ? 'Attended' : s.status === 'not_attended' ? 'Not Attended' : s.status === 'other' ? 'Other' : '';
+        return { Date: formatDate(a.activity_date), Employee: a.employee_name, Department: a.department, Cycle: a.cycle, Status: label, Reason: s.status === 'other' ? (s.reason || '') : '' };
       });
-
-      const worksheet = XLSX.utils.json_to_sheet(enrichedActivities);
-
-      worksheet['!cols'] = [
-        { wch: 15 },
-        { wch: 25 },
-        { wch: 20 },
-        { wch: 15 },
-        { wch: 15 },
-        { wch: 30 },
-      ];
-
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Activities');
-      XLSX.writeFile(
-        workbook,
-        `activities_${new Date().toISOString().split('T')[0]}.xlsx`
-      );
-    } catch (error) {
-      console.error('Error exporting activities:', error);
-      alert('Error exporting activities');
-    }
+      const ws = XLSX.utils.json_to_sheet(rows);
+      ws['!cols'] = [{ wch: 15 }, { wch: 25 }, { wch: 20 }, { wch: 8 }, { wch: 15 }, { wch: 30 }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Activities');
+      XLSX.writeFile(wb, `activities_${new Date().toLocaleDateString('en-CA')}.xlsx`);
+    } catch { alert('Export failed'); }
   };
 
   const columns = [
-    { key: 'activity_date', label: 'Date',       render: (val) => formatDate(val) },
-    { key: 'employee_name', label: 'Employee' },
+    { key: 'activity_date', label: 'Date',       render: v => formatDate(v) },
+    { key: 'employee_name', label: 'Employee',   render: v => <span className="font-semibold text-slate-800">{v}</span> },
     { key: 'department',    label: 'Department' },
-    { key: 'cycle',         label: 'Cycle' },
+    { key: 'cycle',         label: 'Cycle',      render: v => <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full text-xs font-semibold">Cycle {v}</span> },
     {
-      key: 'status',
-      label: 'Status',
+      key: 'status', label: 'Status',
       render: (_, row) => {
-        const rowKey = getRowKey(row);
-        const saved  = activityStatuses[rowKey] || {};
-        return (
-          <StatusCell
-            rowKey={rowKey}
-            initialStatus={saved.status || ''}
-            initialReason={saved.reason || ''}
-            onStatusChange={handleStatusChange}
-          />
-        );
-      },
+        const k = getRowKey(row); const sv = activityStatuses[k] || {};
+        return <StatusCell rowKey={k} initialStatus={sv.status || ''} initialReason={sv.reason || ''} onStatusChange={handleStatusChange} />;
+      }
     },
   ];
 
   return (
-    <div className="ml-64 min-h-screen bg-gray-100">
-      <TopBar title="Activity History" />
+    <div className="page-wrapper">
+      <TopBar title="Activity History" onMenuClick={onMenuClick} />
 
-      <div className="p-8">
-        {/* Filters */}
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Month</label>
-              <input
-                type="month"
-                value={month}
-                onChange={(e) => { setMonth(e.target.value); setPage(1); }}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-              />
+      <div className="page-content">
+        {/* Filters card */}
+        <div className="card p-4 sm:p-5 mb-5">
+          {/* Date mode toggle */}
+          <div className="flex items-center gap-2 mb-4">
+            <span className="text-xs font-semibold text-slate-500">Filter by:</span>
+            <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-semibold">
+              <button
+                onClick={() => { setFilterMode('month'); setPage(1); }}
+                className={`px-3 py-1.5 transition-colors ${filterMode === 'month' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>
+                Month
+              </button>
+              <button
+                onClick={() => { setFilterMode('date'); setPage(1); }}
+                className={`px-3 py-1.5 transition-colors ${filterMode === 'date' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>
+                Specific Date
+              </button>
             </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* Month OR Date picker */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Department</label>
-              <select
-                value={department}
-                onChange={(e) => { setDepartment(e.target.value); setPage(1); }}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-              >
+              {filterMode === 'month' ? (
+                <>
+                  <label className="label">Month & Year</label>
+                  <input type="month" value={month}
+                    onChange={e => { setMonth(e.target.value); setPage(1); }} className="input" />
+                </>
+              ) : (
+                <>
+                  <label className="label">Specific Date</label>
+                  <div className="relative">
+                    <FiCalendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                    <input type="date" value={date}
+                      onChange={e => { setDate(e.target.value); setPage(1); }} className="input pl-9" />
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Department */}
+            <div>
+              <label className="label">Department</label>
+              <select value={department} onChange={e => { setDepartment(e.target.value); setPage(1); }} className="input">
                 <option value="all">All Departments</option>
-                {departments.map((dept) => (
-                  <option key={dept} value={dept}>{dept}</option>
-                ))}
+                {departments.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             </div>
+
+            {/* Search */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Search Employee</label>
-              <input
-                type="text"
-                placeholder="Employee name..."
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-              />
+              <label className="label">Search Employee</label>
+              <div className="relative">
+                <FiSearch size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input type="text" placeholder="Name…" value={search}
+                  onChange={e => { setSearch(e.target.value); setPage(1); }} className="input pl-9" />
+              </div>
             </div>
-            <div className="flex items-end">
-              <button
-                onClick={handleExport}
-                className="w-full bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 flex items-center justify-center gap-2 font-medium"
-              >
-                <FiDownload size={20} /> Export
+
+            {/* Actions */}
+            <div className="flex items-end gap-2">
+              <button onClick={() => setShowAddModal(true)} className="btn-primary flex-1 !py-2.5 text-sm">
+                <FiUserPlus size={15} /> Add Employee
+              </button>
+              <button onClick={handleExport} className="btn-success !px-3 !py-2.5" title="Export Excel">
+                <FiDownload size={16} />
               </button>
             </div>
           </div>
         </div>
 
         {/* Table */}
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="p-6 border-b border-gray-200">
-            <h3 className="text-lg font-bold text-gray-800">
-              Activity Records ({pagination.total})
-            </h3>
+        <div className="card overflow-hidden">
+          <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-slate-100">
+            <div>
+              <h3 className="text-sm font-bold text-slate-800">Activity Records</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {pagination.total} records
+                {filterMode === 'date' && date && ` · ${formatDate(date)}`}
+                {filterMode === 'month' && month && ` · ${new Date(month + '-01').toLocaleString('default', { month: 'long', year: 'numeric' })}`}
+              </p>
+            </div>
           </div>
 
-          {loading ? (
-            <div className="p-8 text-center"><LoadingSpinner /></div>
-          ) : (
-            <>
-              <Table columns={columns} data={activities} loading={loading} />
-              {pagination.totalPages > 1 && (
-                <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
-                  <p className="text-sm text-gray-600">
-                    Page {pagination.page} of {pagination.totalPages}
-                  </p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setPage(Math.max(1, page - 1))}
-                      disabled={page === 1}
-                      className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-                    >
-                      Previous
-                    </button>
-                    <button
-                      onClick={() => setPage(Math.min(pagination.totalPages, page + 1))}
-                      disabled={page === pagination.totalPages}
-                      className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50"
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-              )}
-            </>
+          <Table columns={columns} data={activities} loading={loading}
+            emptyMessage="No activities found for the selected filters" />
+
+          {pagination.totalPages > 1 && (
+            <div className="flex items-center justify-between px-5 sm:px-6 py-3.5 border-t border-slate-100 bg-slate-50/50">
+              <p className="text-xs text-slate-500">
+                Page <span className="font-semibold">{pagination.page}</span> of{' '}
+                <span className="font-semibold">{pagination.totalPages}</span>
+              </p>
+              <div className="flex gap-2">
+                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}
+                  className="btn-secondary !px-3 !py-2 text-xs">
+                  <FiChevronLeft size={14} />
+                </button>
+                <button onClick={() => setPage(p => Math.min(pagination.totalPages, p + 1))}
+                  disabled={page === pagination.totalPages} className="btn-secondary !px-3 !py-2 text-xs">
+                  <FiChevronRight size={14} />
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>
+
+      {showAddModal && (
+        <AddEmployeeModal
+          onClose={() => setShowAddModal(false)}
+          onAdded={() => { fetchActivities(); }}
+        />
+      )}
     </div>
   );
 };

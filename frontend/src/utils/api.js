@@ -25,11 +25,12 @@ export const employeeAPI = {
 // Activities
 export const activityAPI = {
   getToday: () => api.get('/activities/today'),
-  getAll: (page = 1, limit = 20, month = '', department = '', search = '') =>
-    api.get('/activities', { params: { page, limit, month, department, search } }),
+  getAll: (page = 1, limit = 20, month = '', department = '', search = '', date = '') =>
+    api.get('/activities', { params: { page, limit, month, department, search, date } }),
   generate: () => api.post('/activities/generate'),
   reset: () => api.post('/activities/reset'),
   clearAll: () => api.post('/activities/clear-all'),
+  addManual: (activity_date, employee_id) => api.post('/activities/add-manual', { activity_date, employee_id }),
 };
 
 // Upload

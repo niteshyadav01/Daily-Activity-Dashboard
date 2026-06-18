@@ -24,12 +24,14 @@ router.get('/today', async (req, res) => {
 // GET /activities — with filters + pagination
 router.get('/', async (req, res) => {
   try {
-    const { month, department, search, page = 1, limit = 20 } = req.query;
+    const { month, date, department, search, page = 1, limit = 20 } = req.query;
 
     const filter = {};
 
-    if (month) {
-      // match YYYY-MM prefix
+    // Specific date takes priority over month
+    if (date) {
+      filter.activity_date = date; // exact YYYY-MM-DD match
+    } else if (month) {
       filter.activity_date = { $regex: `^${month}` };
     }
 
@@ -170,6 +172,44 @@ router.post('/generate', async (req, res) => {
         department: a.department,
         cycle: a.cycle,
       })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /activities/add-manual — add an employee to an existing activity date
+router.post('/add-manual', async (req, res) => {
+  try {
+    const { activity_date, employee_id } = req.body;
+
+    if (!activity_date || !employee_id) {
+      return res.status(400).json({ error: 'activity_date and employee_id are required' });
+    }
+
+    // Fetch employee details
+    const employee = await Employee.findById(employee_id);
+    if (!employee) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+
+    // Prevent duplicate on same date
+    const existing = await Activity.findOne({ activity_date, employee_id });
+    if (existing) {
+      return res.status(409).json({ error: `${employee.employee_name} is already in activities for ${activity_date}` });
+    }
+
+    const activity = await Activity.create({
+      activity_date,
+      employee_id: employee._id,
+      employee_name: employee.employee_name,
+      department: employee.department,
+      cycle: employee.cycle_number,
+    });
+
+    res.status(201).json({
+      message: 'Activity added successfully',
+      activity,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

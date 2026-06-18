@@ -1,243 +1,173 @@
 import React, { useRef, useState } from 'react';
-import { FiUploadCloud, FiCheckCircle, FiAlertCircle } from 'react-icons/fi';
+import { FiUploadCloud, FiCheckCircle, FiAlertCircle, FiFile, FiX } from 'react-icons/fi';
 import TopBar from '../components/TopBar';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { uploadAPI } from '../utils/api';
 
-const Upload = () => {
-  const fileInput = useRef(null);
-  const [loading, setLoading] = useState(false);
-  const [preview, setPreview] = useState(null);
-  const [error, setError] = useState('');
+const Upload = ({ onMenuClick }) => {
+  const fileInput  = useRef(null);
+  const [loading, setLoading]     = useState(false);
   const [importing, setImporting] = useState(false);
-  const [success, setSuccess] = useState('');
+  const [preview, setPreview]     = useState(null);
+  const [error, setError]         = useState('');
+  const [success, setSuccess]     = useState('');
+  const [dragOver, setDragOver]   = useState(false);
 
-  const handleFileSelect = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const processFile = async (file) => {
     const ext = file.name.split('.').pop().toLowerCase();
     if (!['xlsx', 'xls', 'csv'].includes(ext)) {
-      setError('Only .xlsx, .xls, and .csv files are supported');
-      return;
+      setError('Only .xlsx, .xls and .csv files are supported.'); return;
     }
-
     try {
-      setLoading(true);
-      setError('');
-      setPreview(null);
-
-      const response = await uploadAPI.preview(file);
-      setPreview(response.data);
-    } catch (err) {
-      setError(err.response?.data?.error || 'Error previewing file');
-    } finally {
-      setLoading(false);
-    }
+      setLoading(true); setError(''); setPreview(null);
+      const res = await uploadAPI.preview(file);
+      setPreview(res.data);
+    } catch (e) { setError(e.response?.data?.error || 'Error reading file'); }
+    finally { setLoading(false); }
   };
 
+  const handleFileChange = (e) => { const f = e.target.files?.[0]; if (f) processFile(f); };
+  const handleDrop = (e) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; if (f) processFile(f); };
+
   const handleImport = async () => {
-    if (!preview?.data?.toAdd || preview.data.toAdd.length === 0) {
-      setError('No valid employees to import');
-      return;
-    }
-
+    if (!preview?.data?.toAdd?.length) { setError('No new employees to import'); return; }
     try {
-      setImporting(true);
-      setError('');
-
+      setImporting(true); setError('');
       await uploadAPI.import(preview.data.toAdd);
       setSuccess(`Successfully imported ${preview.data.toAdd.length} employees!`);
       setPreview(null);
-      setFileInput.current.value = '';
-
-      setTimeout(() => {
-        setSuccess('');
-      }, 5000);
-    } catch (err) {
-      setError(err.response?.data?.error || 'Error importing employees');
-    } finally {
-      setImporting(false);
-    }
+      if (fileInput.current) fileInput.current.value = '';
+      setTimeout(() => setSuccess(''), 5000);
+    } catch (e) { setError(e.response?.data?.error || 'Import failed'); }
+    finally { setImporting(false); }
   };
 
+  const reset = () => { setPreview(null); setError(''); if (fileInput.current) fileInput.current.value = ''; };
+
   return (
-    <div className="ml-64 min-h-screen bg-gray-100">
-      <TopBar title="Upload Employees" />
+    <div className="page-wrapper">
+      <TopBar title="Upload Employees" onMenuClick={onMenuClick} />
+      <div className="page-content">
+        <div className="max-w-2xl mx-auto space-y-5">
+          {error   && <div className="alert-error"><FiAlertCircle size={16} className="flex-shrink-0" /><p>{error}</p></div>}
+          {success && <div className="alert-success"><FiCheckCircle size={16} className="flex-shrink-0" /><p>{success}</p></div>}
 
-      <div className="p-8">
-        <div className="max-w-2xl mx-auto">
-          {/* Upload Area */}
-          <div
-            onClick={() => fileInput.current?.click()}
-            className="bg-white rounded-lg shadow p-12 border-2 border-dashed border-gray-300 text-center cursor-pointer hover:border-blue-500 transition-colors"
-          >
-            <FiUploadCloud className="mx-auto text-gray-400 mb-4" size={48} />
-            <h3 className="text-xl font-bold text-gray-800 mb-2">Upload Excel File</h3>
-            <p className="text-gray-600 mb-4">
-              Drop your file here or click to select
-            </p>
-            <p className="text-sm text-gray-500">
-              Supported: .xlsx, .xls, .csv
-            </p>
-            <input
-              ref={fileInput}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-          </div>
-
-          {/* Error Message */}
-          {error && (
-            <div className="mt-6 bg-red-50 border border-red-200 rounded-lg p-4 flex gap-3">
-              <FiAlertCircle className="text-red-600 flex-shrink-0 mt-0.5" size={20} />
-              <p className="text-red-800">{error}</p>
+          {/* Drop zone */}
+          {!preview && !loading && (
+            <div
+              onClick={() => fileInput.current?.click()}
+              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleDrop}
+              className={`card p-10 sm:p-14 flex flex-col items-center justify-center text-center cursor-pointer border-2 border-dashed transition-all duration-200
+                ${dragOver ? 'border-indigo-400 bg-indigo-50' : 'border-slate-200 hover:border-indigo-400 hover:bg-indigo-50/40'}`}
+            >
+              <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 transition-colors ${dragOver ? 'bg-indigo-100' : 'bg-slate-100'}`}>
+                <FiUploadCloud size={32} className={dragOver ? 'text-indigo-500' : 'text-slate-400'} />
+              </div>
+              <p className="text-base font-bold text-slate-700 mb-1">
+                {dragOver ? 'Drop your file here' : 'Upload Excel or CSV'}
+              </p>
+              <p className="text-sm text-slate-400 mb-4">Drag & drop or click to select</p>
+              <span className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-semibold shadow-sm hover:bg-indigo-700 transition-colors">
+                Choose File
+              </span>
+              <p className="text-xs text-slate-400 mt-3">Supported: .xlsx · .xls · .csv</p>
+              <input ref={fileInput} type="file" accept=".xlsx,.xls,.csv" onChange={handleFileChange} className="hidden" />
             </div>
           )}
 
-          {/* Success Message */}
-          {success && (
-            <div className="mt-6 bg-green-50 border border-green-200 rounded-lg p-4 flex gap-3">
-              <FiCheckCircle className="text-green-600 flex-shrink-0 mt-0.5" size={20} />
-              <p className="text-green-800">{success}</p>
+          {loading && (
+            <div className="card py-16">
+              <LoadingSpinner size="lg" />
+              <p className="text-center text-sm text-slate-400 mt-3">Reading file…</p>
             </div>
           )}
 
           {/* Preview */}
-          {loading ? (
-            <div className="mt-8 bg-white rounded-lg shadow p-8 text-center">
-              <LoadingSpinner />
-            </div>
-          ) : preview ? (
-            <div className="mt-8 bg-white rounded-lg shadow p-6">
-              <h3 className="text-lg font-bold text-gray-800 mb-4">Import Summary</h3>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                <div className="bg-blue-50 rounded-lg p-4 text-center">
-                  <p className="text-2xl font-bold text-blue-600">{preview.summary.total}</p>
-                  <p className="text-sm text-gray-600">Total Records</p>
+          {preview && !loading && (
+            <div className="card overflow-hidden">
+              <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-slate-100">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800">Import Preview</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">Review before importing</p>
                 </div>
-                <div className="bg-green-50 rounded-lg p-4 text-center">
-                  <p className="text-2xl font-bold text-green-600">{preview.summary.toAdd}</p>
-                  <p className="text-sm text-gray-600">To Import</p>
-                </div>
-                <div className="bg-yellow-50 rounded-lg p-4 text-center">
-                  <p className="text-2xl font-bold text-yellow-600">{preview.summary.skipped}</p>
-                  <p className="text-sm text-gray-600">Duplicates</p>
-                </div>
-                <div className="bg-red-50 rounded-lg p-4 text-center">
-                  <p className="text-2xl font-bold text-red-600">{preview.summary.duplicates}</p>
-                  <p className="text-sm text-gray-600">Invalid</p>
-                </div>
+                <button onClick={reset} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 transition-colors"><FiX size={16} /></button>
               </div>
 
-              {/* To Add Table */}
+              {/* Summary stats */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-5">
+                {[
+                  { label: 'Total Records', value: preview.summary.total,      bg: 'bg-indigo-50',  text: 'text-indigo-700' },
+                  { label: 'To Import',     value: preview.summary.toAdd,       bg: 'bg-emerald-50', text: 'text-emerald-700' },
+                  { label: 'Already Exist', value: preview.summary.skipped,    bg: 'bg-amber-50',   text: 'text-amber-700' },
+                  { label: 'Invalid',       value: preview.summary.duplicates, bg: 'bg-red-50',     text: 'text-red-700' },
+                ].map(s => (
+                  <div key={s.label} className={`${s.bg} rounded-xl p-3 text-center`}>
+                    <p className={`text-2xl font-extrabold ${s.text}`}>{s.value}</p>
+                    <p className="text-xs text-slate-500 mt-0.5 font-medium">{s.label}</p>
+                  </div>
+                ))}
+              </div>
+
+              {/* New employees table */}
               {preview.data.toAdd.length > 0 && (
-                <div className="mb-6">
-                  <h4 className="font-semibold text-gray-800 mb-3">New Employees ({preview.data.toAdd.length})</h4>
-                  <div className="overflow-x-auto">
+                <div className="px-5 pb-4">
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                    New Employees ({preview.data.toAdd.length})
+                  </p>
+                  <div className="rounded-xl border border-slate-100 overflow-hidden">
                     <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-gray-50 border-b">
-                          <th className="px-4 py-2 text-left">Name</th>
-                          <th className="px-4 py-2 text-left">Department</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {preview.data.toAdd.slice(0, 10).map((emp, idx) => (
-                          <tr key={idx} className="border-b hover:bg-gray-50">
-                            <td className="px-4 py-2">{emp.employee_name}</td>
-                            <td className="px-4 py-2">{emp.department}</td>
+                      <thead><tr className="bg-slate-50">
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400 uppercase">Name</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-400 uppercase">Department</th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {preview.data.toAdd.slice(0, 8).map((e, i) => (
+                          <tr key={i} className="hover:bg-slate-50">
+                            <td className="px-4 py-2.5 font-medium text-slate-700">{e.employee_name}</td>
+                            <td className="px-4 py-2.5 text-slate-500">{e.department}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
-                    {preview.data.toAdd.length > 10 && (
-                      <p className="text-sm text-gray-600 mt-2">
-                        ... and {preview.data.toAdd.length - 10} more
+                    {preview.data.toAdd.length > 8 && (
+                      <p className="px-4 py-2 text-xs text-slate-400 bg-slate-50 border-t border-slate-100">
+                        + {preview.data.toAdd.length - 8} more employees
                       </p>
                     )}
                   </div>
                 </div>
               )}
 
-              {/* Skipped Table */}
-              {preview.data.skipped.length > 0 && (
-                <div className="mb-6">
-                  <h4 className="font-semibold text-gray-800 mb-3 text-yellow-700">
-                    Already Exists ({preview.data.skipped.length})
-                  </h4>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="bg-yellow-50 border-b">
-                          <th className="px-4 py-2 text-left">Name</th>
-                          <th className="px-4 py-2 text-left">Department</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {preview.data.skipped.slice(0, 5).map((emp, idx) => (
-                          <tr key={idx} className="border-b hover:bg-gray-50">
-                            <td className="px-4 py-2">{emp.employee_name}</td>
-                            <td className="px-4 py-2">{emp.department}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div className="flex gap-3 pt-4 border-t">
-                <button
-                  onClick={handleImport}
-                  disabled={importing || preview.data.toAdd.length === 0}
-                  className="flex-1 bg-green-600 text-white py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium flex items-center justify-center gap-2"
-                >
-                  {importing ? <LoadingSpinner size="sm" /> : <FiCheckCircle size={20} />}
-                  {importing ? 'Importing...' : 'Import Now'}
+              <div className="flex gap-3 px-5 pb-5">
+                <button onClick={handleImport} disabled={importing || preview.data.toAdd.length === 0}
+                  className="btn-success flex-1">
+                  {importing ? <LoadingSpinner size="sm" /> : <FiCheckCircle size={16} />}
+                  {importing ? 'Importing…' : `Import ${preview.data.toAdd.length} Employees`}
                 </button>
-                <button
-                  onClick={() => {
-                    setPreview(null);
-                    fileInput.current.value = '';
-                  }}
-                  className="flex-1 bg-gray-300 text-gray-800 py-2 rounded-lg hover:bg-gray-400 font-medium"
-                >
-                  Cancel
-                </button>
+                <button onClick={reset} className="btn-secondary flex-1">Cancel</button>
               </div>
             </div>
-          ) : null}
+          )}
 
-          {/* Expected Format */}
-          <div className="mt-8 bg-blue-50 rounded-lg shadow p-6 border border-blue-200">
-            <h4 className="font-semibold text-blue-900 mb-3">📋 Expected Excel Format</h4>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-blue-100">
-                  <th className="px-4 py-2 text-left">Employee Name</th>
-                  <th className="px-4 py-2 text-left">Department</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="bg-white">
-                  <td className="px-4 py-2">Salman Sir</td>
-                  <td className="px-4 py-2">Projects</td>
-                </tr>
-                <tr className="bg-white">
-                  <td className="px-4 py-2">Abhishekh Bharti</td>
-                  <td className="px-4 py-2">Projects</td>
-                </tr>
-                <tr className="bg-white">
-                  <td className="px-4 py-2">Dahesh</td>
-                  <td className="px-4 py-2">Accounts</td>
-                </tr>
-              </tbody>
-            </table>
+          {/* Format guide */}
+          <div className="card p-5">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Expected Excel Format</p>
+            <div className="rounded-xl border border-slate-100 overflow-hidden text-sm">
+              <table className="w-full">
+                <thead><tr className="bg-slate-50">
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Employee Name</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500">Department</th>
+                </tr></thead>
+                <tbody className="divide-y divide-slate-50">
+                  {[['Salman Sir', 'Projects'], ['Abhishekh Bharti', 'Projects'], ['Dahesh', 'Accounts']].map(([n, d]) => (
+                    <tr key={n}><td className="px-4 py-2.5 text-slate-600">{n}</td><td className="px-4 py-2.5 text-slate-400">{d}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-xs text-slate-400 mt-3">Column names are detected automatically — the tool looks for columns containing "name"/"employee" and "department"/"dept".</p>
           </div>
         </div>
       </div>
