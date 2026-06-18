@@ -26,6 +26,8 @@ connectDB();
 // ======================
 const allowedOrigins = [
   process.env.CLIENT_URL,
+  'https://daily-activity-dashboard.netlify.app',
+  'https://daily-activity-dashboard-frontend.onrender.com',
   'http://localhost:5173',
   'http://localhost:4173',
 ].filter(Boolean);
