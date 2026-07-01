@@ -1,15 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+  BarChart, Bar, LineChart, Line,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 import { FiBarChart2, FiTrendingUp, FiUsers, FiCalendar } from 'react-icons/fi';
 import TopBar from '../components/TopBar';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { reportsAPI } from '../utils/api';
 import { getCurrentMonth } from '../utils/helpers';
-
-const COLORS = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6','#f97316'];
 
 const ChartCard = ({ title, subtitle, children }) => (
   <div className="card p-5 sm:p-6">
@@ -113,7 +111,7 @@ const Reports = ({ onMenuClick }) => {
         </div>
 
         {/* Charts row 2 */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-1 gap-5">
           <ChartCard title="Top Participants" subtitle="All-time activity count per employee">
             {allTimeData?.allTimeParticipation?.length > 0 ? (
               <div className="space-y-3">
@@ -139,24 +137,7 @@ const Reports = ({ onMenuClick }) => {
             ) : <EmptyChart message="No participation data yet" />}
           </ChartCard>
 
-          <ChartCard title="Department Participation" subtitle="All-time distribution">
-            {allTimeData?.departmentParticipation?.length > 0 ? (
-              <ResponsiveContainer width="100%" height={260}>
-                <PieChart>
-                  <Pie data={allTimeData.departmentParticipation} cx="50%" cy="50%"
-                    outerRadius={90} innerRadius={45} dataKey="count" nameKey="department"
-                    label={({ department, percent }) => `${department.split(' ')[0]} ${(percent * 100).toFixed(0)}%`}
-                    labelLine={false}>
-                    {allTimeData.departmentParticipation.map((_, i) => (
-                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(v, n) => [v, n]} />
-                  <Legend formatter={v => <span className="text-xs text-slate-600">{v}</span>} />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : <EmptyChart message="No department data yet" />}
-          </ChartCard>
+          {/* Department Participation chart removed */}
         </div>
       </div>
     </div>

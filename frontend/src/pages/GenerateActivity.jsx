@@ -170,24 +170,7 @@ const GenerateActivity = ({ onMenuClick }) => {
           )}
         </div>
 
-        {/* Rules */}
-        <div className="card p-5 mt-5">
-          <h3 className="text-sm font-bold text-slate-700 mb-3">Selection Rules</h3>
-          <ul className="space-y-2 text-xs text-slate-500">
-            {[
-              'Employees with the lowest selection count are always chosen first',
-              'Random shuffle among equally eligible employees ensures fairness',
-              'No employee is repeated on the same day',
-              'Cycle number auto-increments when all employees reach the same count',
-              'Only active employees participate in selection',
-            ].map((r, i) => (
-              <li key={i} className="flex items-start gap-2">
-                <FiCheckCircle size={13} className="text-emerald-500 flex-shrink-0 mt-0.5" />
-                {r}
-              </li>
-            ))}
-          </ul>
-        </div>
+       
       </div>
     </div>
   );

@@ -18,22 +18,31 @@ const StatCard = ({ title, value, icon: Icon, color = 'indigo', subtitle, trend 
   const c = colorMap[color] || colorMap.indigo;
 
   return (
-    <div className={`card p-5 flex items-start gap-4 transition-shadow hover:shadow-md`}>
-      {Icon && (
-        <div className={`flex-shrink-0 w-12 h-12 rounded-2xl flex items-center justify-center ${c.icon}`}>
-          <Icon size={22} />
-        </div>
-      )}
-      <div className="min-w-0 flex-1">
-        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider truncate">{title}</p>
-        <p className={`text-2xl sm:text-3xl font-extrabold mt-1 ${c.value} truncate`}>{value ?? '—'}</p>
-        {subtitle && <p className="text-xs text-slate-400 mt-1 truncate">{subtitle}</p>}
-        {trend !== undefined && (
-          <p className={`text-xs mt-1 font-medium ${trend >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+    <div className="card h-full min-h-[92px] p-4 flex flex-col gap-2 transition-shadow hover:shadow-md">
+      <div className="flex items-center gap-3">
+        {Icon && (
+          <div className={`flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${c.icon}`}>
+            <Icon size={18} />
+          </div>
+        )}
+        <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide leading-snug break-normal">
+          {title}
+        </p>
+      </div>
+
+      <div className="flex-1 flex items-center justify-center">
+        <p className={`text-2xl font-extrabold leading-tight whitespace-nowrap text-center ${c.value}`}>
+          {value ?? '—'}
+        </p>
+      </div>
+
+      {trend !== undefined && (
+        <div className="mt-auto pt-2 border-t border-slate-100">
+          <p className={`text-xs font-medium ${trend >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
             {trend >= 0 ? '↑' : '↓'} {Math.abs(trend)}% from last month
           </p>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -355,14 +355,7 @@ const History = ({ onMenuClick }) => {
         </div>
 
         {/* Info banner about status logic */}
-        <div className="alert-info mb-5 text-xs">
-          <FiCheckCircle size={14} className="flex-shrink-0 mt-0.5 text-indigo-500" />
-          <p className="text-indigo-700">
-            <span className="font-semibold">Attendance logic:</span>
-            {' '}Marking <span className="font-bold text-emerald-700">Attended</span> completes the employee's turn — they rejoin after everyone else is done.
-            {' '}Marking <span className="font-bold text-red-700">Not Attended</span> or <span className="font-bold text-amber-700">Other</span> re-queues them to appear again sooner.
-          </p>
-        </div>
+       
 
         {/* Table */}
         <div className="card overflow-hidden">

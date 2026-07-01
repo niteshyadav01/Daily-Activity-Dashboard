@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
-  FiUsers, FiCheckCircle, FiRotateCw, FiClock,
-  FiTrendingUp, FiActivity, FiRefreshCw
+  FiUsers, FiCheckCircle, FiClock,
+  FiTrendingUp, FiRefreshCw
 } from 'react-icons/fi';
 import TopBar from '../components/TopBar';
 import StatCard from '../components/StatCard';
@@ -58,43 +58,18 @@ const Dashboard = ({ onMenuClick }) => {
       <TopBar title="Dashboard" onMenuClick={onMenuClick} />
 
       <div className="page-content">
-        {/* Stat cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5 mb-6">
+        {/*
+          Stat cards — 4 equal-weight KPIs in one row on desktop.
+        */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5 items-stretch mb-6">
           <StatCard title="Total Employees" value={stats?.totalEmployees ?? 0}
             icon={FiUsers} color="indigo" subtitle="Active workforce" />
           <StatCard title="Today's Selected" value={stats?.todaySelected ?? 0}
             icon={FiCheckCircle} color="emerald" subtitle="On treadmill today" />
-          <StatCard title="Current Cycle" value={`Cycle ${stats?.rotationProgress?.currentCycle ?? 1}`}
-            icon={FiRotateCw} color="amber" subtitle="Rotation round" />
           <StatCard title="Pending Rotation" value={stats?.pendingEmployees ?? 0}
             icon={FiClock} color="rose" subtitle="Yet to be selected" />
-        </div>
-
-        {/* Secondary */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-5 mb-6">
-          <div className="card p-5 flex items-center gap-5">
-            <div className="w-12 h-12 rounded-2xl bg-sky-100 flex items-center justify-center flex-shrink-0">
-              <FiTrendingUp size={22} className="text-sky-600" />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Monthly Activity</p>
-              <p className="text-3xl font-extrabold text-sky-700 mt-0.5">{stats?.monthlyActivityCount ?? 0}</p>
-              <p className="text-xs text-slate-400 mt-0.5">Activities this month</p>
-            </div>
-          </div>
-          <div className="card p-5 flex items-center gap-5">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-100 flex items-center justify-center flex-shrink-0">
-              <FiActivity size={22} className="text-emerald-600" />
-            </div>
-            <div>
-              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">System Status</p>
-              <div className="flex items-center gap-2 mt-1">
-                <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse" />
-                <p className="text-sm font-semibold text-slate-700">All Systems Operational</p>
-              </div>
-              <p className="text-xs text-slate-400 mt-0.5">MongoDB Atlas connected</p>
-            </div>
-          </div>
+          <StatCard title="Monthly Activity" value={stats?.monthlyActivityCount ?? 0}
+            icon={FiTrendingUp} color="sky" subtitle="Activities this month" />
         </div>
 
         {/* Recent activities */}
