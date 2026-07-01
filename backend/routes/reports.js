@@ -144,10 +144,11 @@ router.get('/stats/all', async (req, res) => {
         { $project: { _id: 0, total: 1, active: 1, inactive: 1 } },
       ]).then((r) => r[0] || { total: 0, active: 0, inactive: 0 }),
 
-      // All-time participation per employee
+      // All-time participation per employee (top 10)
       Activity.aggregate([
         { $group: { _id: '$employee_id', employee_name: { $first: '$employee_name' }, count: { $sum: 1 } } },
         { $sort: { count: -1 } },
+        { $limit: 10 },
         { $project: { _id: 0, employee_id: '$_id', employee_name: 1, count: 1 } },
       ]),
 

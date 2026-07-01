@@ -117,7 +117,7 @@ const Reports = ({ onMenuClick }) => {
           <ChartCard title="Top Participants" subtitle="All-time activity count per employee">
             {allTimeData?.allTimeParticipation?.length > 0 ? (
               <div className="space-y-3">
-                {allTimeData.allTimeParticipation.slice(0, 6).map((emp, i) => {
+                {allTimeData.allTimeParticipation.slice(0, 10).map((emp, i) => {
                   const max = allTimeData.allTimeParticipation[0]?.count || 1;
                   const pct = Math.round((emp.count / max) * 100);
                   return (
